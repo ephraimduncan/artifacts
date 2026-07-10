@@ -55,11 +55,5 @@ bun run check      # wrangler types + tsc
 bun run deploy     # wrangler deploy
 ```
 
-Secrets: `wrangler secret put ARTIFACTS_TOKEN` (locally mirrored at `~/.config/artifacts/token`). Local dev uses `.dev.vars`.
+Secrets: `wrangler secret put ARTIFACTS_TOKEN`. Local dev uses `.dev.vars`.
 
-## Notes
-
-- The `artifacts.duncan.land` custom domain is provisioned by the `routes` entry in `wrangler.jsonc`.
-- The duncan.land zone strips `ETag` on responses; conditional requests work via `Last-Modified` instead.
-- Everything on this origin is public, user-supplied HTML. Never host anything credentialed (logged-in dashboards, cookies) on this origin.
-- `robots.txt` disallows all crawling; flip it in `src/index.ts` if you want artifacts indexed.
