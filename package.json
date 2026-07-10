@@ -1,0 +1,28 @@
+{
+	"name": "@ephraimduncan/artifacts",
+	"version": "0.1.0",
+	"description": "Push a self-contained HTML file to artifacts.duncan.land, get a shareable link",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ephraimduncan/artifacts.git"
+	},
+	"homepage": "https://artifacts.duncan.land",
+	"type": "module",
+	"bin": {
+		"artifacts": "bin/artifacts"
+	},
+	"files": [
+		"bin"
+	],
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"types": "wrangler types",
+		"check": "wrangler types && tsc --noEmit"
+	},
+	"devDependencies": {
+		"typescript": "^5.8.3",
+		"wrangler": "^4.110.0"
+	}
+}

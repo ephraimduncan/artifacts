@@ -1,0 +1,218 @@
+#!/usr/bin/env bun
+// artifacts — push a self-contained HTML file, get a shareable link.
+// Auth: ARTIFACTS_TOKEN env (admin) or per-slug deploy keys in ~/.config/artifacts/keys.json.
+import { chmod } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
+
+const BASE = (Bun.env.ARTIFACTS_URL ?? "https://artifacts.duncan.land").replace(/\/+$/, "");
+const KEYS_PATH = join(homedir(), ".config", "artifacts", "keys.json");
+const TOKEN_PATH = join(homedir(), ".config", "artifacts", "token");
+
+const USAGE = `artifacts — push an HTML file, get a link (${BASE})
+
+usage:
+  artifacts push <file> [--name <slug>]   publish or update; prints the URL (also copied)
+  artifacts list                          list everything published
+  artifacts rm <slug>                     delete an artifact you own
+  artifacts open <slug>                   open an artifact in the browser
+
+env:
+  ARTIFACTS_URL     host (default https://artifacts.duncan.land)
+  ARTIFACTS_TOKEN   admin token; falls back to ${TOKEN_PATH};
+                    without either, per-slug deploy keys are
+                    saved and reused from ${KEYS_PATH}
+`;
+
+function fail(message: string): never {
+	console.error(`artifacts: ${message}`);
+	process.exit(1);
+}
+
+function readString(value: unknown, field: string): string | undefined {
+	if (value && typeof value === "object" && field in value) {
+		const candidate = (value as Record<string, unknown>)[field];
+		return typeof candidate === "string" ? candidate : undefined;
+	}
+	return undefined;
+}
+
+function readNumber(value: unknown, field: string): number | undefined {
+	if (value && typeof value === "object" && field in value) {
+		const candidate = (value as Record<string, unknown>)[field];
+		return typeof candidate === "number" ? candidate : undefined;
+	}
+	return undefined;
+}
+
+function slugify(name: string): string {
+	const slug = name
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]+/g, "-")
+		.replace(/-{2,}/g, "-")
+		.replace(/^[^a-z0-9]+/, "")
+		.replace(/[-._]+$/, "")
+		.slice(0, 128);
+	if (!slug) fail(`cannot derive a slug from "${name}"`);
+	return slug;
+}
+
+async function loadKeys(): Promise<Record<string, string>> {
+	try {
+		const parsed: unknown = await Bun.file(KEYS_PATH).json();
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			const keys: Record<string, string> = {};
+			for (const [slug, key] of Object.entries(parsed)) {
+				if (typeof key === "string") keys[slug] = key;
+			}
+			return keys;
+		}
+	} catch {
+		// missing or malformed file — start fresh
+	}
+	return {};
+}
+
+async function writeKeys(keys: Record<string, string>): Promise<void> {
+	await Bun.write(KEYS_PATH, `${JSON.stringify(keys, null, "\t")}\n`, { createPath: true });
+	await chmod(KEYS_PATH, 0o600);
+}
+
+async function adminToken(): Promise<string | undefined> {
+	const fromEnv = Bun.env.ARTIFACTS_TOKEN?.trim();
+	if (fromEnv) return fromEnv;
+	try {
+		const fromFile = (await Bun.file(TOKEN_PATH).text()).trim();
+		if (fromFile) return fromFile;
+	} catch {
+		// no token file — deploy-key mode
+	}
+	return undefined;
+}
+
+async function authHeader(slug: string): Promise<Record<string, string>> {
+	const admin = await adminToken();
+	if (admin) return { authorization: `Bearer ${admin}` };
+	const key = (await loadKeys())[slug];
+	return key ? { authorization: `Bearer ${key}` } : {};
+}
+
+async function copyToClipboard(text: string): Promise<void> {
+	try {
+		const proc = Bun.spawn(["pbcopy"], { stdin: "pipe" });
+		proc.stdin.write(text);
+		await proc.stdin.end();
+		await proc.exited;
+	} catch {
+		// no clipboard available — URL is still printed
+	}
+}
+
+async function push(args: string[]): Promise<void> {
+	let file: string | undefined;
+	let name: string | undefined;
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--name") {
+			name = args[++i];
+			if (!name) fail("--name requires a value");
+		} else if (!file) {
+			file = args[i];
+		} else {
+			fail(`unexpected argument: ${args[i]}`);
+		}
+	}
+	if (!file) fail("usage: artifacts push <file> [--name <slug>]");
+
+	const blob = Bun.file(file);
+	if (!(await blob.exists())) fail(`no such file: ${file}`);
+	const slug = slugify(name ?? basename(file).replace(/\.[a-z0-9]+$/i, ""));
+
+	const response = await fetch(`${BASE}/${slug}`, {
+		method: "PUT",
+		headers: {
+			...(await authHeader(slug)),
+			"content-type": blob.type || "text/html; charset=utf-8",
+		},
+		body: blob,
+	});
+	const data: unknown = await response.json().catch(() => null);
+	if (!response.ok) fail(`${response.status} ${readString(data, "error") ?? response.statusText}`);
+
+	const url = readString(data, "url") ?? `${BASE}/${slug}`;
+	const deployKey = readString(data, "deployKey");
+	if (deployKey) {
+		const keys = await loadKeys();
+		keys[slug] = deployKey;
+		await writeKeys(keys);
+		console.error(`deploy key saved to ${KEYS_PATH}`);
+	}
+	await copyToClipboard(url);
+	console.log(url);
+}
+
+async function list(): Promise<void> {
+	const response = await fetch(`${BASE}/`, { headers: { accept: "application/json" } });
+	if (!response.ok) fail(`${response.status} ${response.statusText}`);
+	const entries: unknown = await response.json();
+	if (!Array.isArray(entries)) fail("unexpected response shape");
+	if (entries.length === 0) {
+		console.log("nothing published yet");
+		return;
+	}
+	const width = Math.max(...entries.map((entry: unknown) => readString(entry, "slug")?.length ?? 0));
+	for (const entry of entries) {
+		const slug = readString(entry, "slug") ?? "?";
+		const size = readNumber(entry, "size") ?? 0;
+		const uploaded = readString(entry, "uploaded")?.slice(0, 10) ?? "";
+		const sizeLabel =
+			size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} kB` : `${(size / (1024 * 1024)).toFixed(1)} MB`;
+		console.log(`${slug.padEnd(width)}  ${sizeLabel.padStart(9)}  ${uploaded}  ${BASE}/${slug}`);
+	}
+}
+
+async function rm(args: string[]): Promise<void> {
+	const slug = args[0];
+	if (!slug || args.length > 1) fail("usage: artifacts rm <slug>");
+	const response = await fetch(`${BASE}/${slug}`, {
+		method: "DELETE",
+		headers: await authHeader(slug),
+	});
+	if (response.status === 204) {
+		const keys = await loadKeys();
+		if (keys[slug]) {
+			delete keys[slug];
+			await writeKeys(keys);
+		}
+		console.log(`deleted ${BASE}/${slug}`);
+		return;
+	}
+	const data: unknown = await response.json().catch(() => null);
+	fail(`${response.status} ${readString(data, "error") ?? response.statusText}`);
+}
+
+async function openArtifact(args: string[]): Promise<void> {
+	const slug = args[0];
+	if (!slug || args.length > 1) fail("usage: artifacts open <slug>");
+	Bun.spawn(["open", `${BASE}/${slug}`]).unref();
+}
+
+const [command, ...rest] = Bun.argv.slice(2);
+switch (command) {
+	case "push":
+		await push(rest);
+		break;
+	case "list":
+	case "ls":
+		await list();
+		break;
+	case "rm":
+	case "delete":
+		await rm(rest);
+		break;
+	case "open":
+		await openArtifact(rest);
+		break;
+	default:
+		console.log(USAGE);
+		process.exit(command ? 1 : 0);
+}
