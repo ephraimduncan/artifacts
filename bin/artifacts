@@ -13,7 +13,7 @@ const USAGE = `artifacts — push an HTML file, get a link (${BASE})
 
 usage:
   artifacts push <file> [--name <slug>]   publish or update; prints the URL (also copied)
-  artifacts list                          list everything published
+  artifacts list                          list all artifacts (admin token required)
   artifacts rm <slug>                     delete an artifact you own
   artifacts open <slug>                   open an artifact in the browser
 
@@ -151,7 +151,11 @@ async function push(args: string[]): Promise<void> {
 }
 
 async function list(): Promise<void> {
-	const response = await fetch(`${BASE}/`, { headers: { accept: "application/json" } });
+	const admin = await adminToken();
+	if (!admin) fail(`list requires the admin token (ARTIFACTS_TOKEN or ${TOKEN_PATH})`);
+	const response = await fetch(`${BASE}/`, {
+		headers: { accept: "application/json", authorization: `Bearer ${admin}` },
+	});
 	if (!response.ok) fail(`${response.status} ${response.statusText}`);
 	const entries: unknown = await response.json();
 	if (!Array.isArray(entries)) fail("unexpected response shape");

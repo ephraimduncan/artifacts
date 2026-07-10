@@ -11,12 +11,24 @@ A Cloudflare Worker + R2 bucket. No accounts: publishing a new slug returns a `d
 | `PUT /:slug` | none (new slug) / deploy key or admin (existing) | store file, return JSON with `url` (+ `deployKey` on first anonymous publish) |
 | `GET /:slug` | public | serve the file (`Last-Modified` conditional GETs supported) |
 | `DELETE /:slug` | deploy key or admin | remove |
-| `GET /` | public | landing page + list of everything; JSON with `Accept: application/json` |
+| `GET /` | public (JSON list: admin) | landing page; full JSON listing with `Accept: application/json` + admin token |
 | `GET /skill` | public | installable agent skill for publishing here |
 
 Slugs: `[a-z0-9._-]`, first char alphanumeric, max 128 chars. Files: 25 MB max, any content type (defaults to `text/html`).
 
 Keys are sent as `Authorization: Bearer <key>` (or `x-deploy-key`). Only SHA-256 hashes of deploy keys are stored (R2 object `customMetadata.keyHash`); comparisons are timing-safe.
+
+Artifacts are unlisted: nothing is browsable, everyone keeps their own link.
+
+## Agent skill
+
+Install the `publish-artifact` skill ([skills/publish-artifact/SKILL.md](skills/publish-artifact/SKILL.md)) so a coding agent can publish on request:
+
+```bash
+npx skills add ephraimduncan/artifacts
+```
+
+Works with Claude Code, Cursor, Codex, OpenCode, and the other agents [skills.sh](https://skills.sh) supports. The raw skill is also served at [artifacts.duncan.land/skill](https://artifacts.duncan.land/skill).
 
 ## CLI
 
@@ -28,7 +40,7 @@ The CLI runs on [Bun](https://bun.sh) (`#!/usr/bin/env bun`), so Bun must be ins
 
 ```
 artifacts push <file> [--name <slug>]   publish/update; prints URL, copies to clipboard
-artifacts list                          list everything published
+artifacts list                          list all artifacts (admin token required)
 artifacts rm <slug>                     delete
 artifacts open <slug>                   open in browser
 ```

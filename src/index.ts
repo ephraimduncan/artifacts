@@ -1,4 +1,4 @@
-import skillMarkdown from "../skill/SKILL.md";
+import skillMarkdown from "../skills/publish-artifact/SKILL.md";
 import { landingPage, type ArtifactEntry } from "./page";
 
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -140,22 +140,24 @@ function artifactHeaders(object: R2Object): Headers {
 // --- index ---
 
 async function listArtifacts(request: Request, env: Env, url: URL): Promise<Response> {
-	const entries: ArtifactEntry[] = [];
-	let cursor: string | undefined;
-	do {
-		const page = await env.BUCKET.list({ cursor, limit: 1000 });
-		for (const object of page.objects) {
-			entries.push({ slug: object.key, size: object.size, uploaded: object.uploaded.toISOString() });
-		}
-		cursor = page.truncated ? page.cursor : undefined;
-	} while (cursor);
-	entries.sort((a, b) => b.uploaded.localeCompare(a.uploaded));
-
 	if (request.headers.get("accept")?.includes("application/json")) {
+		if (!(await isAdmin(request, env))) {
+			return json({ error: "listing requires the admin token" }, 401);
+		}
+		const entries: ArtifactEntry[] = [];
+		let cursor: string | undefined;
+		do {
+			const page = await env.BUCKET.list({ cursor, limit: 1000 });
+			for (const object of page.objects) {
+				entries.push({ slug: object.key, size: object.size, uploaded: object.uploaded.toISOString() });
+			}
+			cursor = page.truncated ? page.cursor : undefined;
+		} while (cursor);
+		entries.sort((a, b) => b.uploaded.localeCompare(a.uploaded));
 		return json(entries.map((entry) => ({ ...entry, url: `${url.origin}/${entry.slug}` })));
 	}
-	return new Response(landingPage(entries, url.origin), {
-		headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+	return new Response(landingPage(url.origin), {
+		headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" },
 	});
 }
 
